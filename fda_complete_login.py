@@ -1089,10 +1089,12 @@ async def main(reference_number: str):
     print("🔍 Filtering data...")
     recent_data = [row for row in data if row["updated_at"] >= five_minutes_before]
 
+    print("🔍 Sorting data...")
     recent_data = sorted(recent_data, key=lambda x: x["reference_number"], reverse=True)
 
     grouped = {}
 
+    print("🔍 Grouping data...")
     for row in recent_data:
         reference_number = row["reference_number"]
         invoice_number = row["invoice_number"]
@@ -1124,11 +1126,15 @@ async def main(reference_number: str):
         item["items"].append(rest)
 
     # แปลง dict → list
+    print("🔍 Converting dict to list...")
     grouped_list = list(grouped.values())
 
+    print("🔍 Sorting list invoice number...")
     for ref in grouped_list:
         ref["items"].sort(key=lambda x: x["invoice_number"])
     # Launch browser
+
+    print("🔍 Launching browser...")
     browser = await uc.start(
         headless=False,
         browser_args=[
@@ -1148,6 +1154,7 @@ async def main(reference_number: str):
     data_permit_group = []
     seen = set()
 
+    print("🔍 Creating permit group...")
     for item in data:
         # สร้าง tuple เพื่อเช็คความซ้ำ
         key = (item['permit_id'], item['permit_type'], item['vendor_name'], item['product_code'])
@@ -1161,6 +1168,7 @@ async def main(reference_number: str):
                 'product_code': item['product_code']
             })
 
+    print("🔍 Creating permit group done...")
     if stepJob["step1"] != "success" :
 
         print("🌐 Opening Digital ID login page...")
