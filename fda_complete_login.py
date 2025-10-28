@@ -8,7 +8,7 @@ import os
 from supabase import create_client, Client
 import base64
 from nodriver import cdp
-
+import re
 
 SUPABASE_URL = "https://cnexrwsphsqdykauuaga.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuZXhyd3NwaHNxZHlrYXV1YWdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYyNjYwODcsImV4cCI6MjA3MTg0MjA4N30.lYYJexUI1Lj_EWz0jQ0ROZV0_pLVGrtLNIPBEDavcPg"
@@ -20,6 +20,14 @@ class GlobalState:
     company_name = ""
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def regex_permit_id(mapping_fda_patterns, vendor_name, permit_id):
+    for pattern in mapping_fda_patterns:
+        if pattern["vendor_name"].lower() in vendor_name.lower():
+            pattern_regex = pattern["regex_patterns"]
+            return re.sub(fr'{pattern_regex}', '', permit_id)
+        
+    return permit_id
 
 async def take_screenshot(page, step_name: str, reference_number: str):
     """ถ่าย screenshot แล้วอัปโหลดเข้า Supabase"""
@@ -473,7 +481,7 @@ def update_step_job(reference_number, payload):
     except Exception as e:
         print("❌ Error fetching data from API:", e)
 
-async def action_sky_net(page, detail, license_list, input_data, invoice_number, stepJob, mapping_type): 
+async def action_sky_net(page, detail, license_list, input_data, invoice_number, stepJob, mapping_type, mapping_fda_patterns, vendor_name): 
     """ฟังก์ชันหลักในการทำงานกับ FDA website"""
     
     mapping_type_name = next(
@@ -497,10 +505,11 @@ async def action_sky_net(page, detail, license_list, input_data, invoice_number,
      
     # Find and enter invoice number
     print("📝 Entering invoice")
+    permit_id = regex_permit_id(mapping_fda_patterns, vendor_name, detail["permit_id"])
     success_invoice_input = await fill_input_with_retry(
         page,
         selector='input[name*="ctl00$ContentPlaceHolder1$TextBox1"], input[id="ctl00_ContentPlaceHolder1_TextBox1"]',
-        value=detail["permit_id"],
+        value=permit_id,
         label="Invoice input",
         max_retries=3,
         wait_time=2
@@ -1004,6 +1013,46 @@ def get_mapping_vendor_name():
         print(f"❌ Error fetching data from API: {e}")
         return []
 
+def get_mapping_fda_patterns():
+    """
+    ฟังก์ชันสำหรับดึงข้อมูลจาก API
+    
+    Returns:
+        list: รายการข้อมูลที่ดึงมาจาก API
+    """
+    try:
+        # กำหนด URL ของ API
+        api_url = "https://cnexrwsphsqdykauuaga.supabase.co/rest/v1/fda_patterns"
+        # กำหนด headers สำหรับ request
+        headers = {
+            'Content-Type': 'application/json',
+            'apiKey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuZXhyd3NwaHNxZHlrYXV1YWdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYyNjYwODcsImV4cCI6MjA3MTg0MjA4N30.lYYJexUI1Lj_EWz0jQ0ROZV0_pLVGrtLNIPBEDavcPg',
+            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuZXhyd3NwaHNxZHlrYXV1YWdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYyNjYwODcsImV4cCI6MjA3MTg0MjA4N30.lYYJexUI1Lj_EWz0jQ0ROZV0_pLVGrtLNIPBEDavcPg'
+        }
+        
+        # ส่ง GET request ไปยัง API
+        response = requests.get(api_url, headers=headers, timeout=30)
+        
+        # ตรวจสอบ status code
+        if response.status_code == 200:
+            data = response.json()
+            print(f"✅ Successfully fetched {len(data)} records from API")
+            return data
+        else:
+            print(f"❌ API request failed with status code: {response.status_code}")
+            print(f"Response: {response.text}")
+            return []
+            
+    except requests.exceptions.Timeout:
+        print("❌ API request timeout")
+        return []
+    except requests.exceptions.ConnectionError:
+        print("❌ Failed to connect to API")
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching data from API: {e}")
+        return []
+
 async def main(reference_number: str):
 
     mapping_type = [
@@ -1023,6 +1072,7 @@ async def main(reference_number: str):
     data = get_extracted_data_requests(reference_number)
     job = get_jobs_data_requests(reference_number)
     mapping_vendor_name = get_mapping_vendor_name()
+    mapping_fda_patterns = get_mapping_fda_patterns()
 
     # แปลง updated_at เป็น datetime
     for row in data:
@@ -1030,7 +1080,6 @@ async def main(reference_number: str):
 
     # เอาเวลาของตัวสุดท้ายเป็น reference
     latest_time = data[0]["updated_at"]
-    print(f"Latest time: {latest_time}")
     five_minutes_before = latest_time - timedelta(minutes=5)
 
     # กรองเฉพาะข้อมูลที่อยู่ในช่วง 5 นาทีสุดท้ายจาก latest_time
@@ -1302,7 +1351,7 @@ async def main(reference_number: str):
                         if not convert_code_click:
                             print("❌ Cannot proceed - failed to click Convert Code")
                             
-                    await action_sky_net(page, data_permit, license_list, input_data, invoice_number, stepJob, mapping_type)
+                    await action_sky_net(page, data_permit, license_list, input_data, invoice_number, stepJob, mapping_type, mapping_fda_patterns, data_permit["vendor_name"])
 
                     countlicense = len(license_list)
 
