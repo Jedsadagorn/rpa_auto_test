@@ -1075,14 +1075,18 @@ async def main(reference_number: str):
     mapping_fda_patterns = get_mapping_fda_patterns()
 
     # แปลง updated_at เป็น datetime
+    print("🔍 Converting updated_at to datetime...")
     for row in data:
         row["updated_at"] = datetime.fromisoformat(row["updated_at"])
 
     # เอาเวลาของตัวสุดท้ายเป็น reference
+    print("🔍 Getting latest time...")
     latest_time = data[0]["updated_at"]
+    print("🔍 Getting 5 minutes before latest time...")
     five_minutes_before = latest_time - timedelta(minutes=5)
 
     # กรองเฉพาะข้อมูลที่อยู่ในช่วง 5 นาทีสุดท้ายจาก latest_time
+    print("🔍 Filtering data...")
     recent_data = [row for row in data if row["updated_at"] >= five_minutes_before]
 
     recent_data = sorted(recent_data, key=lambda x: x["reference_number"], reverse=True)
