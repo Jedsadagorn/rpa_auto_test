@@ -1138,6 +1138,7 @@ async def main(reference_number: str):
     browser = await uc.start(
         headless=True,
         browser_args=[
+            "--no-sandbox",
             "--window-size=1920,1080",
             "--start-maximized",
         ],
