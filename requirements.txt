@@ -3,3 +3,4 @@ requests
 nodriver
 beautifulsoup4
 asyncio
+supabase
