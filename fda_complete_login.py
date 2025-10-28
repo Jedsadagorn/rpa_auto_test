@@ -1136,7 +1136,7 @@ async def main(reference_number: str):
 
     print("🔍 Launching browser...")
     browser = await uc.start(
-        headless=False,
+        headless=True,
         browser_args=[
             "--window-size=1920,1080",
             "--start-maximized",
