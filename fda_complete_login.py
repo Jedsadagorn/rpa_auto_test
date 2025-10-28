@@ -1142,6 +1142,7 @@ async def main(reference_number: str):
             "--start-maximized",
         ],
     )
+    print("🔍 Browser launched...")
     input_data = []
     license_list = []
 
