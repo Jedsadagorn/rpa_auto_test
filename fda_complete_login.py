@@ -1138,7 +1138,11 @@ async def main(reference_number: str):
     browser = await uc.start(
         headless=True,
         browser_args=[
-            "--no-sandbox",
+            "--no-sandbox",  # ⭐ สำคัญมากสำหรับ Docker
+            "--disable-dev-shm-usage",  # ⭐ แก้ปัญหา shared memory
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-extensions",
             "--window-size=1920,1080",
             "--start-maximized",
         ],
