@@ -56,30 +56,44 @@ def download_and_upload_file(file_url: str, reference_number: str, fileName: str
     local_path = os.path.join("downloads", file_name)
 
     print(f"⬇️ Downloading file: {file_url}")
-    resp = requests.get(file_url)
+    resp = requests.get(file_url, stream=True)  # ⭐ เพิ่ม stream=True
     if resp.status_code != 200:
         raise Exception(f"❌ Failed to download ({resp.status_code}): {file_url}")
 
+    # ⭐ ตรวจสอบ Content-Type จริงของไฟล์
+    content_type = resp.headers.get('content-type', 'application/octet-stream')
+    print(f"📄 Content-Type from source: {content_type}")
+
+    # บันทึกไฟล์
     with open(local_path, "wb") as f:
         f.write(resp.content)
 
-    # อัปโหลดเข้า Supabase -> {reference_number}/downloads/{file_name}
-    storage_path = f"{reference_number}/downloads/{file_name}.pdf"
+    # ⭐ ตรวจสอบขนาดไฟล์
+    file_size = os.path.getsize(local_path)
+    print(f"📦 File size: {file_size} bytes")
+    
+    if file_size == 0:
+        raise Exception("❌ Downloaded file is empty!")
+
+    # อัปโหลดเข้า Supabase
+    storage_path = f"{reference_number}/downloads/{file_name}"  # ⭐ ลบ .pdf ออก (ใช้ชื่อไฟล์เดิม)
     print(f"☁️ Uploading to Supabase: {storage_path}")
-    # with open(local_path, "rb") as f:
-    #     supabase.storage.from_(BUCKET_NAME).upload(
-    #         storage_path, f, {"upsert": "true"}
-    #     )
+    
     with open(local_path, "rb") as f:
         supabase.storage.from_(BUCKET_NAME).upload(
             storage_path, 
             f, 
             {
-                "content-type": "application/pdf",  # ⭐ สำคัญมาก!
+                "content-type": content_type,  # ⭐ ใช้ content-type จริงจากแหล่งที่มา
                 "upsert": "true"
             }
         )
-    print(f"☁️ Uploaded to Supabase: {storage_path}")
+    
+    print(f"✅ Uploaded successfully: {storage_path}")
+    
+    # ⭐ ลบไฟล์ local (optional)
+    # os.remove(local_path)
+    
     return storage_path
 
 async def print_page_and_upload(page, reference_number: str, fileName: str):
@@ -594,6 +608,7 @@ async def action_sky_net(page, detail, license_list, input_data, invoice_number,
                             let productCodeColumnIndex = -1;
                             let productRemarkColumnIndex = -1;
                             let remarkColumnIndex = -1;
+                            let pageColumnIndex = -1;
                             
                             headers.forEach((header, index) => {{
                                 const headerText = header.textContent.trim();
@@ -611,6 +626,9 @@ async def action_sky_net(page, detail, license_list, input_data, invoice_number,
                                 if (headerText.includes('หมายเหตุ')) {{
                                     remarkColumnIndex = index;
                                 }}
+                                if (headerText.includes('หน้าที่')) {{
+                                    pageColumnIndex = index;
+                                }}
                             }});
                             
                             // ถ้าไม่เจอ column "รหัสใหม่" ให้ return null
@@ -626,24 +644,26 @@ async def action_sky_net(page, detail, license_list, input_data, invoice_number,
                                     newLicense_number: cells[newLicenseColumnIndex]?.textContent?.trim() || '',
                                     remark_product: productRemarkColumnIndex !== -1 ? cells[productRemarkColumnIndex]?.textContent?.trim() || 'N/A' : 'N/A',
                                     remark: remarkColumnIndex !== -1 ? cells[remarkColumnIndex]?.textContent?.trim() || 'N/A' : 'N/A',
+                                    pageNo: pageColumnIndex !== -1 ? cells[pageColumnIndex]?.textContent?.trim() || 'N/A' : 'N/A',
                                     newLicenseColumnIndex: newLicenseColumnIndex,
                                     productCodeColumnIndex: productCodeColumnIndex,
                                     productRemarkColumnIndex: productRemarkColumnIndex,
                                     remarkColumnIndex: remarkColumnIndex,
+                                    pageColumnIndex: pageColumnIndex
                                 }});
                             }}
                             return JSON.stringify(null);
                         }})()
                     ''')
                     
-                    print(row_data_json)
                     row_data = json.loads(row_data_json) if row_data_json else None
                     
                     if row_data:
                         print(f"  Page {current_page} - Row {row_index}: Column {row_data['productCodeColumnIndex']} = '{row_data['product_item']}', Column {row_data['newLicenseColumnIndex']} = '{row_data['newLicense_number']}'")
-                        
+                        product_item = regex_permit_id(mapping_fda_patterns, vendor_name, row_data['product_item'])
+                        product_code = regex_permit_id(mapping_fda_patterns, vendor_name, detail['product_code'])
                         # Check if column 4 matches target
-                        if row_data['product_item'] == detail["product_code"]:
+                        if product_item == product_code:
                             code = detail["product_code"]
                             target_data_found = True
                             license_number = row_data['newLicense_number']
@@ -658,7 +678,21 @@ async def action_sky_net(page, detail, license_list, input_data, invoice_number,
                             })
 
                             print(f"  ✅ Found target value {code} at row {row_index}!")
-                        elif row_data['product_item'] == detail["permit_id"]:
+                        elif "pfizer" in vendor_name.lower() and product_item == permit_id and row_data["pageNo"] == "ผลิตยาสำเร็จรูป" :
+                            code = detail["product_code"]
+                            target_data_found = True
+                            license_number = row_data['newLicense_number']
+                            remark_product = row_data['pageNo'] if row_data['remark_product'] == "N/A" else row_data['remark_product']
+                            remark = row_data['remark']
+                            license_list.append({
+                                "permit_id": detail["permit_id"],
+                                "product_code": code,
+                                "license_number": license_number,
+                                "remark_product": remark_product,
+                                "remark": remark
+                            })
+                            print(f"  ✅ Found target value {code} at row {row_index}!")
+                        elif product_item == permit_id and "pfizer" not in vendor_name.lower() :
                             code = detail["product_code"]
                             target_data_found = True
                             license_number = row_data['newLicense_number']
@@ -671,6 +705,7 @@ async def action_sky_net(page, detail, license_list, input_data, invoice_number,
                                 "remark_product": remark_product,
                                 "remark": remark
                             })
+                            print(f"  ✅ Found target value {code} at row {row_index}!")
 
                 
                 
@@ -1075,26 +1110,20 @@ async def main(reference_number: str):
     mapping_fda_patterns = get_mapping_fda_patterns()
 
     # แปลง updated_at เป็น datetime
-    print("🔍 Converting updated_at to datetime...")
     for row in data:
         row["updated_at"] = datetime.fromisoformat(row["updated_at"])
 
     # เอาเวลาของตัวสุดท้ายเป็น reference
-    print("🔍 Getting latest time...")
     latest_time = data[0]["updated_at"]
-    print("🔍 Getting 5 minutes before latest time...")
     five_minutes_before = latest_time - timedelta(minutes=5)
 
     # กรองเฉพาะข้อมูลที่อยู่ในช่วง 5 นาทีสุดท้ายจาก latest_time
-    print("🔍 Filtering data...")
     recent_data = [row for row in data if row["updated_at"] >= five_minutes_before]
 
-    print("🔍 Sorting data...")
     recent_data = sorted(recent_data, key=lambda x: x["reference_number"], reverse=True)
 
     grouped = {}
 
-    print("🔍 Grouping data...")
     for row in recent_data:
         reference_number = row["reference_number"]
         invoice_number = row["invoice_number"]
@@ -1126,17 +1155,14 @@ async def main(reference_number: str):
         item["items"].append(rest)
 
     # แปลง dict → list
-    print("🔍 Converting dict to list...")
     grouped_list = list(grouped.values())
 
-    print("🔍 Sorting list invoice number...")
     for ref in grouped_list:
         ref["items"].sort(key=lambda x: x["invoice_number"])
     # Launch browser
-
-    print("🔍 Launching browser...")
+    print("🌐 Launching browser...")
     browser = await uc.start(
-        headless=True,
+        headless=False,
         browser_args=[
             "--no-sandbox",  # ⭐ สำคัญมากสำหรับ Docker
             "--disable-dev-shm-usage",  # ⭐ แก้ปัญหา shared memory
@@ -1147,7 +1173,7 @@ async def main(reference_number: str):
             "--start-maximized",
         ],
     )
-    print("🔍 Browser launched...")
+    print("🌐 Browser launched")
     input_data = []
     license_list = []
 
@@ -1160,7 +1186,6 @@ async def main(reference_number: str):
     data_permit_group = []
     seen = set()
 
-    print("🔍 Creating permit group...")
     for item in data:
         # สร้าง tuple เพื่อเช็คความซ้ำ
         key = (item['permit_id'], item['permit_type'], item['vendor_name'], item['product_code'])
@@ -1174,7 +1199,6 @@ async def main(reference_number: str):
                 'product_code': item['product_code']
             })
 
-    print("🔍 Creating permit group done...")
     if stepJob["step1"] != "success" :
 
         print("🌐 Opening Digital ID login page...")
